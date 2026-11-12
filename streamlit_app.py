@@ -66,21 +66,7 @@ c2.metric("Recall", "67.9%")
 c3.metric("Mask mAP@50", "66.6%")
 c4.metric("Mask mAP@50–95", "26.6%")
 
-st.subheader("Performance Comparison")
 
-st.bar_chart(
-    {
-        "Metric": [
-            "Precision",
-            "Recall",
-            "Mask mAP@50",
-            "Mask mAP@50–95"
-        ],
-        "Score (%)": [56.4, 67.9, 66.6, 26.6]
-    },
-    x="Metric",
-    y="Score (%)"
-)
 
 st.divider()
 
