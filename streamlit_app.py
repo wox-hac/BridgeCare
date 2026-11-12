@@ -4,6 +4,11 @@ import numpy as np
 import cv2
 from PIL import Image
 from ultralytics import YOLO
+from pathlib import Path
+
+# --------------------------------------------------
+# PAGE CONFIGURATION
+# --------------------------------------------------
 
 st.set_page_config(
     page_title="BridgeCare",
@@ -11,23 +16,79 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load model only once
+MODEL_PATH = Path(__file__).parent / "best.pt"
+
+# Previously reported validation metrics
+METRICS = {
+    "Precision": 56.4,
+    "Recall": 67.9,
+    "Mask mAP@50": 66.6,
+    "Mask mAP@50-95": 26.6
+}
+
+# --------------------------------------------------
+# LOAD MODEL
+# --------------------------------------------------
+
 @st.cache_resource
 def load_model():
-    return YOLO("best.pt")
+    return YOLO(str(MODEL_PATH))
 
-model = load_model()
+# --------------------------------------------------
+# HEADER
+# --------------------------------------------------
 
-# Application heading
 st.title("🏗️ BRIDGECARE")
 st.subheader("Bridge Inspection & Maintenance")
 
 st.write(
-    "Upload a bridge photograph to identify "
-    "and review potential crack regions."
+    "A bridge inspection support system for "
+    "identifying and reviewing visible crack patterns."
 )
 
 st.divider()
+
+# --------------------------------------------------
+# MODEL PERFORMANCE DASHBOARD
+# --------------------------------------------------
+
+st.header("Model Performance Dashboard")
+
+st.caption(
+    "Validation performance measured on the model's "
+    "evaluation dataset. These are not image-specific accuracy scores."
+)
+
+c1, c2, c3, c4 = st.columns(4)
+
+c1.metric("Precision", "56.4%")
+c2.metric("Recall", "67.9%")
+c3.metric("Mask mAP@50", "66.6%")
+c4.metric("Mask mAP@50–95", "26.6%")
+
+st.subheader("Performance Comparison")
+
+st.bar_chart(
+    {
+        "Metric": [
+            "Precision",
+            "Recall",
+            "Mask mAP@50",
+            "Mask mAP@50–95"
+        ],
+        "Score (%)": [56.4, 67.9, 66.6, 26.6]
+    },
+    x="Metric",
+    y="Score (%)"
+)
+
+st.divider()
+
+# --------------------------------------------------
+# IMAGE UPLOAD
+# --------------------------------------------------
+
+st.header("Bridge Inspection")
 
 uploaded_file = st.file_uploader(
     "Upload Inspection Photograph",
@@ -39,115 +100,126 @@ if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
     image_array = np.array(image)
 
-    st.image(
-        image_array,
-        caption="Original Inspection Photograph",
-        use_container_width=True
-    )
+    left, right = st.columns(2)
+
+    with left:
+        st.subheader("Original Photograph")
+        st.image(image, use_container_width=True)
 
     if st.button("Analyse Image", type="primary"):
 
-        with st.spinner("Analysing inspection photograph..."):
+        with st.spinner("Inspecting photograph..."):
 
-            results = model.predict(
-                image_array,
-                imgsz=640,
-                conf=0.25,
-                verbose=False
-            )
+            try:
+                model = load_model()
 
-            result = results[0]
+                result = model.predict(
+                    image_array,
+                    imgsz=640,
+                    conf=0.25,
+                    verbose=False
+                )[0]
 
-            output = image_array.copy()
-            crack_count = 0
+                output = image_array.copy()
+                crack_count = 0
 
-            if result.masks is not None:
+                # Draw segmentation boundaries only
+                if result.masks is not None:
 
-                for polygon in result.masks.xy:
+                    polygons = result.masks.xy
+                    crack_count = len(polygons)
 
-                    points = np.array(
-                        polygon,
-                        dtype=np.int32
-                    ).reshape((-1, 1, 2))
+                    for polygon in polygons:
 
-                    cv2.polylines(
+                        points = np.round(
+                            polygon
+                        ).astype(np.int32)
+
+                        if len(points) >= 2:
+                            cv2.polylines(
+                                output,
+                                [points],
+                                isClosed=True,
+                                color=(255, 255, 0),
+                                thickness=2,
+                                lineType=cv2.LINE_AA
+                            )
+
+                # ----------------------------------
+                # DETECTION OUTPUT
+                # ----------------------------------
+
+                with right:
+                    st.subheader("Crack Boundary Map")
+                    st.image(
                         output,
-                        [points],
-                        True,
-                        (255, 255, 0),
-                        2,
-                        cv2.LINE_AA
+                        use_container_width=True
                     )
 
-                    crack_count += 1
+                st.divider()
 
-        st.divider()
-        st.subheader("Inspection Results")
+                st.header("Inspection Report")
 
-        col1, col2 = st.columns(2)
+                r1, r2 = st.columns(2)
 
-        with col1:
-            st.image(
-                image_array,
-                caption="Original Image",
-                use_container_width=True
-            )
+                r1.metric(
+                    "Cracks Identified",
+                    crack_count
+                )
 
-        with col2:
-            st.image(
-                output,
-                caption="Crack Boundary Map",
-                use_container_width=True
-            )
+                if crack_count > 0:
 
-        st.subheader("Inspection Report")
+                    r2.warning("Review Required")
 
-        if crack_count > 0:
-            st.warning("Review Required")
+                    st.info(
+                        "Highlighted areas require review. "
+                        "Arrange a detailed physical inspection "
+                        "to assess the condition and severity."
+                    )
 
-            st.metric(
-                "Cracks Identified",
-                crack_count
-            )
+                else:
 
-            st.write(
-                "Potential crack regions were identified. "
-                "Please review the highlighted areas."
-            )
+                    r2.success("No Visible Cracks Detected")
 
-            st.write(
-                "Recommendation: Arrange a detailed "
-                "physical inspection."
-            )
+                    st.info(
+                        "No visible crack boundaries were identified "
+                        "in this photograph. This does not guarantee "
+                        "that the structure is crack-free."
+                    )
 
-        else:
-            st.success("No Visible Cracks Detected")
+                # ----------------------------------
+                # DOWNLOAD RESULT
+                # ----------------------------------
 
-            st.metric("Cracks Identified", 0)
+                success, encoded_image = cv2.imencode(
+                    ".png",
+                    cv2.cvtColor(
+                        output,
+                        cv2.COLOR_RGB2BGR
+                    )
+                )
 
-            st.write(
-                "No crack regions were identified "
-                "in this photograph."
-            )
+                if success:
+                    st.download_button(
+                        label="Download Inspection Result",
+                        data=encoded_image.tobytes(),
+                        file_name="BridgeCare_Inspection.png",
+                        mime="image/png"
+                    )
 
-        st.download_button(
-            "Download Inspection Result",
-            data=Image.fromarray(output).tobytes()
-            if False else cv2.imencode(
-                ".png",
-                cv2.cvtColor(output, cv2.COLOR_RGB2BGR)
-            )[1].tobytes(),
-            file_name="BridgeCare_Inspection.png",
-            mime="image/png"
-        )
+            except Exception as e:
+
+                st.error(
+                    "Inspection could not be completed. "
+                    "Please try again."
+                )
+
+                st.exception(e)
 
 st.divider()
 
 st.caption(
-    "BridgeCare | Structural Inspection Support | Version 1.0"
-)
-
-st.caption(
-    "Results are preliminary observations and must be "
-    "verified by a qualified structural inspection professional."
+    "BridgeCare | Inspection observations are preliminary. "
+    "Final structural assessment must be carried out by "
+    "qualified professionals."
 )
